@@ -17,7 +17,11 @@ type Task struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-const filename = "tasks.json"
+const (
+	filename       = "tasks.json"
+	markInProgress = "mark-in-progress"
+	markDone       = "mark-done"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -26,26 +30,37 @@ func main() {
 	}
 
 	operation := os.Args[1]
-	taskString := strings.Join(os.Args[2:], " ")
 
-	//check if file exists
+	// Check if file exists
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		if err := os.WriteFile(filename, []byte("[]"), 0644); err != nil {
 			panic(err)
 		}
 	}
 
+	if strings.HasPrefix(operation, markInProgress) || strings.HasPrefix(operation, markDone) {
+		operation = "markTask"
+	}
+
 	switch operation {
 	case "add":
-		addTask(taskString)
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: task-cli add <description>")
+			os.Exit(1)
+		}
+		addTask(strings.Join(os.Args[2:], " "))
 	case "update":
 		updateTask(os.Args)
-
+	case "delete":
+		deleteTask(os.Args)
+	case "markTask":
+		markTask(os.Args)
+	case "list":
+		listTasks(os.Args)
 	default:
 		fmt.Printf("Unknown operation: %s\n", operation)
 		os.Exit(1)
 	}
-
 }
 
 func loadTasks() []Task {
@@ -78,10 +93,15 @@ func addTask(description string) {
 
 	tasks := loadTasks()
 
-	newId := len(tasks) + 1
+	maxId := 0
+	for _, task := range tasks {
+		if task.ID > maxId {
+			maxId = task.ID
+		}
+	}
 
 	newTask := Task{
-		ID:          newId,
+		ID:          maxId + 1,
 		Description: description,
 		Status:      "todo",
 		CreatedAt:   time.Now(),
@@ -89,8 +109,7 @@ func addTask(description string) {
 	}
 	tasks = append(tasks, newTask)
 	saveTasks(tasks)
-
-	fmt.Printf("Task added successfully (ID: %d)\n", newId)
+	fmt.Printf("Task added successfully (ID: %d)\n", newTask.ID)
 }
 
 func updateTask(args []string) {
@@ -102,8 +121,12 @@ func updateTask(args []string) {
 	id := parseID(args[2])
 	description := strings.Join(args[3:], " ")
 
-	tasks := loadTasks()
+	if strings.TrimSpace(description) == "" {
+		fmt.Println("Error: task description cannot be empty")
+		return
+	}
 
+	tasks := loadTasks()
 	for i, task := range tasks {
 		if task.ID == id {
 			tasks[i].Description = description
@@ -123,4 +146,95 @@ func parseID(idStr string) int {
 		os.Exit(1)
 	}
 	return id
+}
+
+func deleteTask(args []string) {
+	if len(args) < 3 {
+		fmt.Println("Usage: task-cli delete <id>")
+		return
+	}
+	id := parseID(args[2])
+	tasks := loadTasks()
+	for i, task := range tasks {
+		if task.ID == id {
+			tasks = append(tasks[:i], tasks[i+1:]...)
+			saveTasks(tasks)
+			fmt.Printf("Task with ID %d deleted successfully\n", id)
+			return
+		}
+	}
+	fmt.Printf("Task with ID %d not found\n", id)
+}
+
+func markTask(args []string) {
+	if len(args) < 3 {
+		fmt.Println("Usage: task-cli mark-in-progress|mark-done <id>")
+		return
+	}
+	id := parseID(args[2])
+	tasks := loadTasks()
+	for i, task := range tasks {
+		if task.ID == id {
+			if strings.HasPrefix(args[1], markInProgress) {
+				tasks[i].Status = "in-progress"
+			} else if strings.HasPrefix(args[1], markDone) {
+				tasks[i].Status = "done"
+			}
+			tasks[i].UpdatedAt = time.Now()
+			saveTasks(tasks)
+			fmt.Printf("Task with ID %d marked as %s\n", id, tasks[i].Status)
+			return
+		}
+	}
+	fmt.Printf("Task with ID %d not found\n", id)
+}
+
+func listTasks(args []string) {
+	tasks := loadTasks()
+	if len(tasks) == 0 {
+		fmt.Println("No tasks found.")
+		return
+	}
+
+	validStatuses := map[string]bool{
+		"todo":        true,
+		"in-progress": true,
+		"done":        true,
+	}
+
+	// Filter by status if provided
+	if len(args) >= 3 {
+		filter := strings.Join(args[2:], " ")
+		if !validStatuses[filter] {
+			fmt.Printf("Error: unknown status '%s'. Use: todo, in-progress, done\n", filter)
+			return
+		}
+		printHeader()
+		for _, task := range tasks {
+			if task.Status == filter {
+				printTask(task)
+			}
+		}
+		return
+	}
+
+	printHeader()
+	for _, task := range tasks {
+		printTask(task)
+	}
+}
+
+func printHeader() {
+	fmt.Println("ID | Description | Status | Created At | Updated At")
+	fmt.Println("------------------------------------------------------")
+}
+
+func printTask(task Task) {
+	fmt.Printf("%d | %s | %s | %s | %s\n",
+		task.ID,
+		task.Description,
+		task.Status,
+		task.CreatedAt.Format(time.RFC3339),
+		task.UpdatedAt.Format(time.RFC3339),
+	)
 }
